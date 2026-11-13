@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+<style>
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: transparent;
+  font-family: 'Montserrat', sans-serif;
+}
+#root { padding: 0 2px; }
+.recharts-legend-item-text { color: #c7d2e0 !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+/* Puente minimo al protocolo de Streamlit Components (postMessage), mismo
+   patron que components/facturacion_dashboard/index.html del tablero de
+   Facturacion -- sin build step, React/Recharts via CDN (UMD), JSX-less
+   (React.createElement directo). */
+const Streamlit = {
+  _send(payload) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, payload), "*"); },
+  init() {
+    window.addEventListener("message", (event) => {
+      const d = event.data;
+      if (!d || d.type !== "streamlit:render") return;
+      render((d.args) || {});
+    });
+    this._send({ type: "streamlit:componentReady", apiVersion: 1 });
+  },
+  setFrameHeight(height) { this._send({ type: "streamlit:setFrameHeight", height: height }); },
+};
+
+const h = React.createElement;
+const { ResponsiveContainer, ComposedChart, Bar, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend } = Recharts;
+
+function fmtDolar(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  return "$" + Math.round(v).toLocaleString("en-US");
+}
+
+function fmtPct(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  return (v * 100).toFixed(1) + "%";
+}
+
+function TooltipCifras(props) {
+  const { active, payload, label } = props;
+  if (!active || !payload || !payload.length) return null;
+  const filas = payload.filter((f) => f.value !== null && f.value !== undefined)
+                        .sort((a, b) => b.value - a.value);
+  if (!filas.length) return null;
+
+  // Caso especial Ingresos/Nómina (gráfico compuesto de línea de negocio):
+  // se agrega el % Nómina/Ingresos debajo de las cifras.
+  const ingresos = filas.find((f) => f.name === "Ingresos");
+  const nomina = filas.find((f) => f.name === "Nómina");
+  const pct = (ingresos && nomina && ingresos.value) ? nomina.value / ingresos.value : null;
+
+  return h("div", {
+    style: {
+      background: "#13375c", border: "1px solid #3a5578", borderRadius: 8,
+      padding: "8px 12px", fontSize: 12, color: "#F6F6F6", maxHeight: 260, overflowY: "auto",
+    },
+  },
+    h("div", { style: { fontWeight: 700, marginBottom: 4 } }, label),
+    filas.map((f) => h("div", { key: f.dataKey, style: { color: f.color, whiteSpace: "nowrap" } },
+      `${f.name}: ${fmtDolar(f.value)}`)),
+    pct !== null && h("div", { style: { color: "#c7d2e0", whiteSpace: "nowrap", marginTop: 4 } },
+      `Nómina / Ingresos: ${fmtPct(pct)}`)
+  );
+}
+
+function App(props) {
+  // filas: [{x, serie, valor}] -- x es el eje (año, o departamento cuando se
+  // filtra a un área), serie es cada línea dibujada (área, o año cuando se
+  // filtra a un área). Genérico a propósito para servir ambos modos.
+  // tipos: {serie: "bar"|"line"} opcional -- sin especificar, todas son
+  // barras (como antes). Con "line" en alguna, queda un gráfico compuesto
+  // (barras + línea), pedido explícitamente por el usuario con un ejemplo
+  // de Recharts (ComposedChart).
+  const { filas, series, colores, tipos } = props;
+  const ejes = [];
+  filas.forEach((f) => { if (!ejes.includes(f.x)) ejes.push(f.x); });
+  const data = ejes.map((x) => {
+    const row = { x };
+    filas.filter((f) => f.x === x).forEach((f) => { row[f.serie] = f.valor; });
+    return row;
+  });
+
+  return h(ResponsiveContainer, { width: "100%", height: 480 },
+    h(ComposedChart, { data, margin: { top: 10, right: 16, left: 0, bottom: 0 } },
+      h(CartesianGrid, { strokeDasharray: "3 3", stroke: "#2e4d70", vertical: false }),
+      h(XAxis, { dataKey: "x", tick: { fontSize: 12, fill: "#c7d2e0" }, axisLine: { stroke: "#3a5578" }, tickLine: false }),
+      h(YAxis, { tick: { fontSize: 11, fill: "#c7d2e0" }, axisLine: { stroke: "#3a5578" }, tickLine: false,
+                 tickFormatter: fmtDolar, width: 72 }),
+      h(Tooltip, { content: TooltipCifras, cursor: { fill: "rgba(199,210,224,0.06)" } }),
+      h(Legend, { wrapperStyle: { fontSize: 11 }, iconSize: 9, iconType: "circle" }),
+      series.map((s) => {
+        const color = colores[s] || "#9aa5b1";
+        if (tipos && tipos[s] === "line") {
+          return h(Line, {
+            key: s, type: "monotone", dataKey: s, name: s, stroke: color,
+            strokeWidth: 3, dot: { r: 5 }, activeDot: { r: 7 },
+          });
+        }
+        return h(Bar, { key: s, dataKey: s, name: s, fill: color, radius: [10, 10, 0, 0] });
+      })
+    )
+  );
+}
+
+function render(args) {
+  if (!args || !args.filas) return;
+  if (!window.__root) window.__root = ReactDOM.createRoot(document.getElementById("root"));
+  window.__root.render(h(App, {
+    filas: args.filas, series: args.series, colores: args.colores, tipos: args.tipos || {},
+  }));
+  window.setTimeout(() => Streamlit.setFrameHeight(document.body.scrollHeight + 12), 50);
+}
+
+Streamlit.init();
+</script>
+</body>
+</html>
