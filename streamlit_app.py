@@ -195,14 +195,13 @@ def load_2027():
 @st.cache_data(ttl=300, show_spinner=False)
 def load_ingresos():
     """Pestaña 'Ingresos' del Sheet de Town Hall -- bloques apilados por año
-    en la hoja (col A trae la etiqueta '2024'/'2025'/'2026 Real'/'PTO 2026',
-    luego encabezado AREA/meses/TOTAL, luego una fila por área y una fila
-    TOTAL con el total del año en la columna TOTAL). Se usa 2025 (real),
-    'PTO 2026' (presupuesto completo del año, para comparar año completo
-    contra año completo) y '2026 Real' (avance real del año, para la
-    pestaña "General 2026 Real") -- confirmado con el usuario, 2026-11-13 y
-    2026-11-16. '2026 Real' se va actualizando mes a mes en vivo (ya no es
-    solo Ene-Sep). No hay bloque 2027 en este Sheet."""
+    en la hoja (col A trae la etiqueta '2024'/'2025'/'2026 Real'/'PTO 2026'/
+    'PTO 2027', luego encabezado AREA/meses/TOTAL, luego una fila por área y
+    una fila TOTAL con el total del año en la columna TOTAL). Se usa 2025
+    (real), 'PTO 2026' (presupuesto completo del año) y '2026 Real' (avance
+    real, se va actualizando mes a mes en vivo) -- confirmado con el
+    usuario, 2026-11-13 y 2026-11-16. 'PTO 2027' se agregó al Sheet después
+    (2026-11-16) y se usa tal cual para el año 2027."""
     url = f"https://docs.google.com/spreadsheets/d/{INGRESOS_SHEET_ID}/export?format=xlsx"
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
@@ -231,8 +230,9 @@ def load_ingresos():
     total_2025, linea_2025 = _bloque("2025")
     total_2026, linea_2026 = _bloque("PTO 2026")
     total_2026_real, linea_2026_real = _bloque("2026 Real")
-    return ({"2025": total_2025, "2026": total_2026, "2026_real": total_2026_real},
-            {"2025": linea_2025, "2026": linea_2026, "2026_real": linea_2026_real})
+    total_2027, linea_2027 = _bloque("PTO 2027")
+    return ({"2025": total_2025, "2026": total_2026, "2026_real": total_2026_real, "2027": total_2027},
+            {"2025": linea_2025, "2026": linea_2026, "2026_real": linea_2026_real, "2027": linea_2027})
 
 try:
     DF = load_data()
@@ -261,8 +261,8 @@ except Exception:
 try:
     INGRESOS_ANUAL, INGRESOS_POR_LINEA = load_ingresos()
 except Exception:
-    INGRESOS_ANUAL = {"2025": None, "2026": None, "2026_real": None}
-    INGRESOS_POR_LINEA = {"2025": {}, "2026": {}, "2026_real": {}}
+    INGRESOS_ANUAL = {"2025": None, "2026": None, "2026_real": None, "2027": None}
+    INGRESOS_POR_LINEA = {"2025": {}, "2026": {}, "2026_real": {}, "2027": {}}
 
 RESUMEN_ANUAL = {
     "2025": {"costo": DF_2025["Anualizado"].sum() if not DF_2025.empty else None,
@@ -391,7 +391,7 @@ with st.sidebar:
     st.caption("TABLEROS")
     pagina = st.radio(
         "",
-        ["General", "Por Área"],
+        ["General", "General 2026 Real", "Por Área"],
         label_visibility="collapsed",
         key="nav",
     )
@@ -399,30 +399,37 @@ with st.sidebar:
     st.caption(f"Nómina Ancora · {len(DF)} colaboradores")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PANORAMA (General)
+# PANORAMA (General / General 2026 Real)
 # ══════════════════════════════════════════════════════════════════════════════
-if pagina == "General":
+def render_general(sufijo, usar_real):
+    """Cuerpo compartido de "General" (PTO) y "General 2026 Real" -- pedido
+    explícito del usuario, 2026-11-16: manejar PTO y Real en pestañas
+    separadas (se probó primero como un botón dentro de una sola página,
+    pero se revirtió a dos pestañas). Para 2026, usa 'PTO 2026'/'2026 Real'
+    de Ingresos y 'Base'/'Real' de Nómina según `usar_real`; 2025 y 2027 son
+    iguales en ambas páginas (no tienen versión Real todavía). Las keys de
+    los widgets llevan sufijo para no chocar entre páginas."""
+    clave_ing_2026 = "2026_real" if usar_real else "2026"
+    clave_nomina_2026 = "2026_real" if usar_real else "2026"
+    etiqueta_2026 = "Real" if usar_real else "PTO"
+
     st.title("Nómina Ancora")
     st.caption("Cómo se comportó el costo de nómina entre 2025 y 2027.")
-    st.caption("Cada año viene de un archivo propio con su propio esquema de "
-               "columnas (no es la misma hoja repetida) -- 2025 y 2027 están "
-               "confirmados con el usuario, incluyendo las diferencias de "
-               "magnitud que puedan verse raras a primera vista.")
+    if usar_real:
+        st.caption("Vista REAL de 2026: Ingresos de la pestaña '2026 Real' y "
+                   "Nómina de la pestaña 'Real' del Sheet de Nómina 2026 (lo "
+                   "realmente pagado mes a mes, no la plantilla de 'Base'). "
+                   "2025 y 2027 son iguales que en \"General\" -- no tienen "
+                   "versión Real todavía.")
+    else:
+        st.caption("Cada año viene de un archivo propio con su propio esquema de "
+                   "columnas (no es la misma hoja repetida) -- 2025 y 2027 están "
+                   "confirmados con el usuario, incluyendo las diferencias de "
+                   "magnitud que puedan verse raras a primera vista.")
 
     if RESUMEN_ANUAL["2025"]["costo"] is None or RESUMEN_ANUAL["2027"]["costo"] is None:
         st.warning("No se pudo cargar 2025 y/o 2027 -- revisa que los Sheets "
                    "sigan compartidos \"cualquiera con el link\".")
-
-    # Botón arriba de todo: cambia la vista de ingresos de 2026 entre
-    # presupuesto ('PTO 2026') y avance real ('2026 Real') -- afecta la
-    # tarjeta 2026 del KPI, "Nómina como % de ingresos" y el año "2026" de
-    # "por línea de negocio" (pedido explícito del usuario, 2026-11-16: un
-    # solo botón arriba, no una pestaña aparte).
-    vista_2026 = st.radio("Ingresos 2026", ["Presupuesto (PTO)", "Real"],
-                          horizontal=True, key="vista_2026")
-    usar_real = vista_2026 == "Real"
-    clave_ing_2026 = "2026_real" if usar_real else "2026"
-    etiqueta_2026 = "Real" if usar_real else "PTO"
 
     cols = st.columns(3)
     for i, (col, a) in enumerate(zip(cols, años)):
@@ -452,14 +459,10 @@ if pagina == "General":
 
     st.divider()
     st.subheader("Nómina como % de ingresos")
-    st.caption("Ingresos: pestaña 'Ingresos' del Sheet de Town Hall. Nómina "
-               "Real: pestaña 'Real' del Sheet de Nómina 2026 (lo realmente "
-               "pagado mes a mes, no la plantilla de 'Base'). "
-               f"2026 está en vista \"{vista_2026}\" -- cámbiala arriba. "
-               "Ninguno de los dos Sheets trae todavía un bloque de 2027.")
-    clave_nomina_2026 = "2026_real" if usar_real else "2026"
-    cols_ing = st.columns(2)
-    for col, a in zip(cols_ing, ["2025", "2026"]):
+    st.caption("Ingresos: pestaña 'Ingresos' del Sheet de Town Hall (2027 usa "
+               "'PTO 2027', presupuesto).")
+    cols_ing = st.columns(3)
+    for col, a in zip(cols_ing, años):
         clave_ing = clave_ing_2026 if a == "2026" else a
         clave_nomina = clave_nomina_2026 if a == "2026" else a
         ingreso_a = INGRESOS_ANUAL.get(clave_ing)
@@ -483,9 +486,9 @@ if pagina == "General":
                "(Affinity, Autos, Beneficios, Daños, Garantías, Líneas "
                "Financieras, Líneas Personales) -- el resto de las áreas de "
                "Nómina son departamentos internos sin ingreso directo.")
-    año_linea_sel = st.selectbox("Año", ["2025", "2026"], key="año_linea_sel")
-    clave_ing_linea = clave_ing_2026 if año_linea_sel == "2026" else "2025"
-    clave_nomina_linea = clave_nomina_2026 if año_linea_sel == "2026" else "2025"
+    año_linea_sel = st.selectbox("Año", años, index=años.index("2026"), key=f"año_linea_sel_{sufijo}")
+    clave_ing_linea = clave_ing_2026 if año_linea_sel == "2026" else año_linea_sel
+    clave_nomina_linea = clave_nomina_2026 if año_linea_sel == "2026" else año_linea_sel
     lineas_ing = INGRESOS_POR_LINEA.get(clave_ing_linea, {})
     costo_año_linea = RESUMEN_ANUAL[clave_nomina_linea]["por_area"]
     lineas_orden = sorted(lineas_ing.keys(), key=lambda l: -lineas_ing.get(l, 0))
@@ -505,7 +508,7 @@ if pagina == "General":
 
         _area_lineas_component(filas=filas_linea, series=["Ingresos", "Nómina"],
                                 colores={"Ingresos": "#7a9e6e", "Nómina": MARCA_ORO},
-                                tipos={"Nómina": "line"}, default=None, key="linea_negocio")
+                                tipos={"Nómina": "line"}, default=None, key=f"linea_negocio_{sufijo}")
 
         tabla_df = pd.DataFrame(tabla_linea)
         tabla_df["Ingresos"] = tabla_df["Ingresos"].map(fmt)
@@ -519,7 +522,7 @@ if pagina == "General":
                         key=lambda ar: -RESUMEN_ANUAL["2026"]["por_area"].get(ar, 0))
     COLOR_AREA_TEND = {ar: color_for(i) for i, ar in enumerate(areas_tend)}
 
-    area_lineas_sel = st.selectbox("Área", ["Todas"] + areas_tend, key="area_lineas_sel")
+    area_lineas_sel = st.selectbox("Área", ["Todas"] + areas_tend, key=f"area_lineas_sel_{sufijo}")
 
     if area_lineas_sel == "Todas":
         # None (no 0) cuando un área no existe ese año -- así Recharts deja
@@ -529,7 +532,7 @@ if pagina == "General":
             for a in años for ar in areas_tend
         ]
         _area_lineas_component(filas=filas_lineas, series=areas_tend, colores=COLOR_AREA_TEND,
-                                default=None, key="area_lineas")
+                                default=None, key=f"area_lineas_{sufijo}")
         st.caption("Una barra por área y año -- el costo anual de esa área en cada uno de los 3 años.")
     else:
         # Al elegir un área, el eje X cambia de Año a Departamento (dentro
@@ -556,7 +559,7 @@ if pagina == "General":
             for d in deptos_sel for a in años
         ]
         _area_lineas_component(filas=filas_lineas, series=años, colores=COLOR_AÑO,
-                                default=None, key="area_lineas")
+                                default=None, key=f"area_lineas_{sufijo}")
         st.caption(f"Departamentos de {area_lineas_sel} -- una barra por año (2025/2026/2027). "
                    "Sin barra = ese departamento no existía ese año.")
 
@@ -574,6 +577,11 @@ if pagina == "General":
     c3.metric("Costo anual promedio", fmt(costo_total / len(DF)))
     c4.metric("% carga social promedio", pct_plain(DF["Pct Carga Social"].mean()))
     c5.metric("GMM promedio (quien lo tiene)", fmt(DF.loc[DF["GMM"] > 0, "GMM"].mean()))
+
+if pagina == "General":
+    render_general("gen", usar_real=False)
+if pagina == "General 2026 Real":
+    render_general("real", usar_real=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # POR ÁREA
