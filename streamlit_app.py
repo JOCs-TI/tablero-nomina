@@ -401,8 +401,11 @@ if pagina == "General":
         hc = RESUMEN_ANUAL[a]["hc"]
         anterior = RESUMEN_ANUAL[años[i - 1]] if i > 0 else None
         with col, st.container(border=True):
-            etiqueta_año = f"{a} ({etiqueta_2026})" if a == "2026" else a
-            st.markdown(f"##### {etiqueta_año}")
+            # Esta tarjeta es puro costo de Nómina -- no tiene versión PTO/Real
+            # (solo Ingresos la tiene), así que el botón de arriba no la
+            # cambia; por eso NO lleva la etiqueta "(PTO)"/"(Real)" (quitada
+            # 2026-11-16 porque confundía: parecía que la cifra iba a cambiar).
+            st.markdown(f"##### {a}")
             if costo is None:
                 st.metric("Costo anual", "—")
                 st.metric("Colaboradores", "—")
