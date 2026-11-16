@@ -175,10 +175,12 @@ def load_ingresos():
     """Pestaña 'Ingresos' del Sheet de Town Hall -- bloques apilados por año
     en la hoja (col A trae la etiqueta '2024'/'2025'/'2026 Real'/'PTO 2026',
     luego encabezado AREA/meses/TOTAL, luego una fila por área y una fila
-    TOTAL con el total del año en la columna TOTAL). Se usa 2025 (real) y
+    TOTAL con el total del año en la columna TOTAL). Se usa 2025 (real),
     'PTO 2026' (presupuesto completo del año, para comparar año completo
-    contra año completo) -- confirmado con el usuario, 2026-11-13. No hay
-    bloque 2027 en este Sheet."""
+    contra año completo) y '2026 Real' (avance real del año, para la
+    pestaña "General 2026 Real") -- confirmado con el usuario, 2026-11-13 y
+    2026-11-16. '2026 Real' se va actualizando mes a mes en vivo (ya no es
+    solo Ene-Sep). No hay bloque 2027 en este Sheet."""
     url = f"https://docs.google.com/spreadsheets/d/{INGRESOS_SHEET_ID}/export?format=xlsx"
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
@@ -206,7 +208,9 @@ def load_ingresos():
 
     total_2025, linea_2025 = _bloque("2025")
     total_2026, linea_2026 = _bloque("PTO 2026")
-    return {"2025": total_2025, "2026": total_2026}, {"2025": linea_2025, "2026": linea_2026}
+    total_2026_real, linea_2026_real = _bloque("2026 Real")
+    return ({"2025": total_2025, "2026": total_2026, "2026_real": total_2026_real},
+            {"2025": linea_2025, "2026": linea_2026, "2026_real": linea_2026_real})
 
 try:
     DF = load_data()
@@ -231,8 +235,8 @@ except Exception:
 try:
     INGRESOS_ANUAL, INGRESOS_POR_LINEA = load_ingresos()
 except Exception:
-    INGRESOS_ANUAL = {"2025": None, "2026": None}
-    INGRESOS_POR_LINEA = {"2025": {}, "2026": {}}
+    INGRESOS_ANUAL = {"2025": None, "2026": None, "2026_real": None}
+    INGRESOS_POR_LINEA = {"2025": {}, "2026": {}, "2026_real": {}}
 
 RESUMEN_ANUAL = {
     "2025": {"costo": DF_2025["Anualizado"].sum() if not DF_2025.empty else None,
@@ -358,7 +362,7 @@ with st.sidebar:
     st.caption("TABLEROS")
     pagina = st.radio(
         "",
-        ["General", "Por Área"],
+        ["General", "General 2026 Real", "Por Área"],
         label_visibility="collapsed",
         key="nav",
     )
@@ -366,9 +370,14 @@ with st.sidebar:
     st.caption(f"Nómina Ancora · {len(DF)} colaboradores")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PANORAMA
+# PANORAMA (General / General 2026 Real)
 # ══════════════════════════════════════════════════════════════════════════════
-if pagina == "General":
+def render_general(sufijo, con_real=False):
+    """Cuerpo compartido de "General" y "General 2026 Real" -- la única
+    diferencia real es la sección de ingresos: con_real=True AGREGA el
+    ingreso real de 2026 junto al presupuesto ('PTO 2026'), sin quitar ni
+    sustituir nada (pedido explícito del usuario, 2026-11-16). Las keys de
+    los widgets llevan sufijo para no chocar entre ambas páginas."""
     st.title("Nómina Ancora")
     st.caption("Cómo se comportó el costo de nómina entre 2025 y 2027.")
     st.caption("Cada año viene de un archivo propio con su propio esquema de "
@@ -404,24 +413,42 @@ if pagina == "General":
 
     st.divider()
     st.subheader("Nómina como % de ingresos")
-    st.caption("Ingresos: mismo Sheet que usa Town Hall (pestaña 'Ingresos'). "
-               "2026 usa el presupuesto completo del año ('PTO 2026') para "
-               "comparar año completo contra año completo -- ese Sheet no "
-               "trae un bloque de 2027 todavía, por eso no aparece aquí.")
+    if con_real:
+        st.caption("Ingresos: mismo Sheet que usa Town Hall (pestaña 'Ingresos'). "
+                   "Para 2026 se muestra el presupuesto completo del año "
+                   "('PTO 2026') Y el avance real a la fecha ('2026 Real', se "
+                   "va actualizando mes a mes) -- ese Sheet no trae un bloque "
+                   "de 2027 todavía, por eso no aparece aquí.")
+    else:
+        st.caption("Ingresos: mismo Sheet que usa Town Hall (pestaña 'Ingresos'). "
+                   "2026 usa el presupuesto completo del año ('PTO 2026') para "
+                   "comparar año completo contra año completo -- ese Sheet no "
+                   "trae un bloque de 2027 todavía, por eso no aparece aquí.")
     cols_ing = st.columns(2)
     for col, a in zip(cols_ing, ["2025", "2026"]):
         ingreso_a = INGRESOS_ANUAL.get(a)
         costo_a = RESUMEN_ANUAL[a]["costo"]
+        etiqueta_ing = "Ingresos (Presupuesto)" if (con_real and a == "2026") else "Ingresos"
+        etiqueta_pct = "Nómina / Ingresos (Presupuesto)" if (con_real and a == "2026") else "Nómina / Ingresos"
         with col, st.container(border=True):
             st.markdown(f"##### {a}")
             if ingreso_a is None or costo_a is None:
-                st.metric("Ingresos", "—")
+                st.metric(etiqueta_ing, "—")
                 st.metric("Nómina", "—")
-                st.metric("Nómina / Ingresos", "—")
+                st.metric(etiqueta_pct, "—")
             else:
-                st.metric("Ingresos", fmt(ingreso_a))
+                st.metric(etiqueta_ing, fmt(ingreso_a))
                 st.metric("Nómina", fmt(costo_a))
-                st.metric("Nómina / Ingresos", pct_plain(costo_a / ingreso_a))
+                st.metric(etiqueta_pct, pct_plain(costo_a / ingreso_a))
+            if con_real and a == "2026":
+                ingreso_real = INGRESOS_ANUAL.get("2026_real")
+                st.markdown("---")
+                if ingreso_real is None or costo_a is None:
+                    st.metric("Ingresos (Real)", "—")
+                    st.metric("Nómina / Ingresos (Real)", "—")
+                else:
+                    st.metric("Ingresos (Real)", fmt(ingreso_real))
+                    st.metric("Nómina / Ingresos (Real)", pct_plain(costo_a / ingreso_real))
 
     st.divider()
     st.subheader("Nómina vs ingresos por línea de negocio")
@@ -429,9 +456,16 @@ if pagina == "General":
                "(Affinity, Autos, Beneficios, Daños, Garantías, Líneas "
                "Financieras, Líneas Personales) -- el resto de las áreas de "
                "Nómina son departamentos internos sin ingreso directo.")
-    año_linea_sel = st.selectbox("Año", ["2025", "2026"], key="año_linea_sel")
-    lineas_ing = INGRESOS_POR_LINEA.get(año_linea_sel, {})
-    costo_año_linea = RESUMEN_ANUAL[año_linea_sel]["por_area"]
+    if con_real:
+        opciones_linea = ["2025", "2026 (Presupuesto)", "2026 (Real)"]
+    else:
+        opciones_linea = ["2025", "2026"]
+    año_linea_sel = st.selectbox("Año", opciones_linea, key=f"año_linea_sel_{sufijo}")
+    clave_ing_linea = {"2025": "2025", "2026": "2026",
+                       "2026 (Presupuesto)": "2026", "2026 (Real)": "2026_real"}[año_linea_sel]
+    clave_nomina_linea = "2025" if año_linea_sel == "2025" else "2026"
+    lineas_ing = INGRESOS_POR_LINEA.get(clave_ing_linea, {})
+    costo_año_linea = RESUMEN_ANUAL[clave_nomina_linea]["por_area"]
     lineas_orden = sorted(lineas_ing.keys(), key=lambda l: -lineas_ing.get(l, 0))
 
     if not lineas_orden:
@@ -449,7 +483,7 @@ if pagina == "General":
 
         _area_lineas_component(filas=filas_linea, series=["Ingresos", "Nómina"],
                                 colores={"Ingresos": "#7a9e6e", "Nómina": MARCA_ORO},
-                                tipos={"Nómina": "line"}, default=None, key="linea_negocio")
+                                tipos={"Nómina": "line"}, default=None, key=f"linea_negocio_{sufijo}")
 
         tabla_df = pd.DataFrame(tabla_linea)
         tabla_df["Ingresos"] = tabla_df["Ingresos"].map(fmt)
@@ -463,7 +497,7 @@ if pagina == "General":
                         key=lambda ar: -RESUMEN_ANUAL["2026"]["por_area"].get(ar, 0))
     COLOR_AREA_TEND = {ar: color_for(i) for i, ar in enumerate(areas_tend)}
 
-    area_lineas_sel = st.selectbox("Área", ["Todas"] + areas_tend, key="area_lineas_sel")
+    area_lineas_sel = st.selectbox("Área", ["Todas"] + areas_tend, key=f"area_lineas_sel_{sufijo}")
 
     if area_lineas_sel == "Todas":
         # None (no 0) cuando un área no existe ese año -- así Recharts deja
@@ -473,7 +507,7 @@ if pagina == "General":
             for a in años for ar in areas_tend
         ]
         _area_lineas_component(filas=filas_lineas, series=areas_tend, colores=COLOR_AREA_TEND,
-                                default=None, key="area_lineas")
+                                default=None, key=f"area_lineas_{sufijo}")
         st.caption("Una barra por área y año -- el costo anual de esa área en cada uno de los 3 años.")
     else:
         # Al elegir un área, el eje X cambia de Año a Departamento (dentro
@@ -500,7 +534,7 @@ if pagina == "General":
             for d in deptos_sel for a in años
         ]
         _area_lineas_component(filas=filas_lineas, series=años, colores=COLOR_AÑO,
-                                default=None, key="area_lineas")
+                                default=None, key=f"area_lineas_{sufijo}")
         st.caption(f"Departamentos de {area_lineas_sel} -- una barra por año (2025/2026/2027). "
                    "Sin barra = ese departamento no existía ese año.")
 
@@ -518,6 +552,11 @@ if pagina == "General":
     c3.metric("Costo anual promedio", fmt(costo_total / len(DF)))
     c4.metric("% carga social promedio", pct_plain(DF["Pct Carga Social"].mean()))
     c5.metric("GMM promedio (quien lo tiene)", fmt(DF.loc[DF["GMM"] > 0, "GMM"].mean()))
+
+if pagina == "General":
+    render_general("gen", con_real=False)
+if pagina == "General 2026 Real":
+    render_general("real", con_real=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # POR ÁREA
