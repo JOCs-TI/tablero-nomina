@@ -288,6 +288,8 @@ RESUMEN_DEPTO_ANUAL = {
     "2026": DF.groupby(["Área", "Departamento"])["Costo Anual"].sum(),
     "2027": (DF_2027.groupby(["Área", "Departamento"])["Total"].sum()
              if not DF_2027.empty else pd.Series(dtype=float)),
+    "2026_real": (DF_2026_REAL.groupby(["Área", "Departamento"])["Total"].sum()
+                  if not DF_2026_REAL.empty else pd.Series(dtype=float)),
 }
 
 # Misma idea que RESUMEN_DEPTO_ANUAL pero como tabla (Área, Departamento,
@@ -391,7 +393,7 @@ with st.sidebar:
     st.caption("TABLEROS")
     pagina = st.radio(
         "",
-        ["General", "General 2026 Real", "Por Área"],
+        ["General PTO", "General Real", "Por Área"],
         label_visibility="collapsed",
         key="nav",
     )
@@ -399,10 +401,10 @@ with st.sidebar:
     st.caption(f"Nómina Ancora · {len(DF)} colaboradores")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PANORAMA (General / General 2026 Real)
+# PANORAMA (General PTO / General Real)
 # ══════════════════════════════════════════════════════════════════════════════
 def render_general(sufijo, usar_real):
-    """Cuerpo compartido de "General" (PTO) y "General 2026 Real" -- pedido
+    """Cuerpo compartido de "General PTO" y "General Real" -- pedido
     explícito del usuario, 2026-11-16: manejar PTO y Real en pestañas
     separadas (se probó primero como un botón dentro de una sola página,
     pero se revirtió a dos pestañas). Para 2026, usa 'PTO 2026'/'2026 Real'
@@ -412,6 +414,10 @@ def render_general(sufijo, usar_real):
     clave_ing_2026 = "2026_real" if usar_real else "2026"
     clave_nomina_2026 = "2026_real" if usar_real else "2026"
     etiqueta_2026 = "Real" if usar_real else "PTO"
+    # En "General Real", TODO lo de 2026 (KPI, costo por área/departamento,
+    # detalle) sale de la pestaña 'Real' de Nómina -- no solo Ingresos/línea
+    # de negocio (pedido explícito del usuario, 2026-11-16).
+    clave_año = lambda a: clave_nomina_2026 if a == "2026" else a
 
     st.title("Nómina Ancora")
     st.caption("Cómo se comportó el costo de nómina entre 2025 y 2027.")
@@ -419,7 +425,7 @@ def render_general(sufijo, usar_real):
         st.caption("Vista REAL de 2026: Ingresos de la pestaña '2026 Real' y "
                    "Nómina de la pestaña 'Real' del Sheet de Nómina 2026 (lo "
                    "realmente pagado mes a mes, no la plantilla de 'Base'). "
-                   "2025 y 2027 son iguales que en \"General\" -- no tienen "
+                   "2025 y 2027 son iguales que en \"General PTO\" -- no tienen "
                    "versión Real todavía.")
     else:
         st.caption("Cada año viene de un archivo propio con su propio esquema de "
@@ -433,15 +439,12 @@ def render_general(sufijo, usar_real):
 
     cols = st.columns(3)
     for i, (col, a) in enumerate(zip(cols, años)):
-        costo = RESUMEN_ANUAL[a]["costo"]
-        hc = RESUMEN_ANUAL[a]["hc"]
-        anterior = RESUMEN_ANUAL[años[i - 1]] if i > 0 else None
+        costo = RESUMEN_ANUAL[clave_año(a)]["costo"]
+        hc = RESUMEN_ANUAL[clave_año(a)]["hc"]
+        anterior = RESUMEN_ANUAL[clave_año(años[i - 1])] if i > 0 else None
         with col, st.container(border=True):
-            # Esta tarjeta es puro costo de Nómina -- no tiene versión PTO/Real
-            # (solo Ingresos la tiene), así que el botón de arriba no la
-            # cambia; por eso NO lleva la etiqueta "(PTO)"/"(Real)" (quitada
-            # 2026-11-16 porque confundía: parecía que la cifra iba a cambiar).
-            st.markdown(f"##### {a}")
+            etiqueta_año = f"{a} ({etiqueta_2026})" if (usar_real and a == "2026") else a
+            st.markdown(f"##### {etiqueta_año}")
             if costo is None:
                 st.metric("Costo anual", "—")
                 st.metric("Colaboradores", "—")
@@ -518,8 +521,8 @@ def render_general(sufijo, usar_real):
 
     st.divider()
     st.subheader("Costo por área, por año")
-    areas_tend = sorted(set().union(*[RESUMEN_ANUAL[a]["por_area"].keys() for a in años]),
-                        key=lambda ar: -RESUMEN_ANUAL["2026"]["por_area"].get(ar, 0))
+    areas_tend = sorted(set().union(*[RESUMEN_ANUAL[clave_año(a)]["por_area"].keys() for a in años]),
+                        key=lambda ar: -RESUMEN_ANUAL[clave_año("2026")]["por_area"].get(ar, 0))
     COLOR_AREA_TEND = {ar: color_for(i) for i, ar in enumerate(areas_tend)}
 
     area_lineas_sel = st.selectbox("Área", ["Todas"] + areas_tend, key=f"area_lineas_sel_{sufijo}")
@@ -528,7 +531,7 @@ def render_general(sufijo, usar_real):
         # None (no 0) cuando un área no existe ese año -- así Recharts deja
         # un hueco (connectNulls) en vez de dibujar una caída falsa a cero.
         filas_lineas = [
-            {"x": a, "serie": ar, "valor": RESUMEN_ANUAL[a]["por_area"].get(ar)}
+            {"x": a, "serie": ar, "valor": RESUMEN_ANUAL[clave_año(a)]["por_area"].get(ar)}
             for a in años for ar in areas_tend
         ]
         _area_lineas_component(filas=filas_lineas, series=areas_tend, colores=COLOR_AREA_TEND,
@@ -541,7 +544,7 @@ def render_general(sufijo, usar_real):
         # None (no 0) cuando ese departamento no existe ese año, mismo
         # criterio que arriba.
         def _valor_depto(a, d):
-            s = RESUMEN_DEPTO_ANUAL[a]
+            s = RESUMEN_DEPTO_ANUAL[clave_año(a)]
             if not isinstance(s.index, pd.MultiIndex):
                 return None
             v = s.get((area_lineas_sel, d))
@@ -549,7 +552,7 @@ def render_general(sufijo, usar_real):
 
         deptos_sel = set()
         for a in años:
-            s = RESUMEN_DEPTO_ANUAL[a]
+            s = RESUMEN_DEPTO_ANUAL[clave_año(a)]
             if isinstance(s.index, pd.MultiIndex) and area_lineas_sel in s.index.get_level_values(0):
                 deptos_sel.update(s.loc[area_lineas_sel].index.tolist())
         deptos_sel = sorted(deptos_sel, key=lambda d: -(_valor_depto("2026", d) or 0))
@@ -564,23 +567,41 @@ def render_general(sufijo, usar_real):
                    "Sin barra = ese departamento no existía ese año.")
 
     st.divider()
-    st.subheader("Detalle 2026")
-    st.caption("Promedios por colaborador -- solo disponibles en el archivo "
-               "2026, que trae vales y GMM desglosados por persona.")
+    if not usar_real:
+        st.subheader("Detalle 2026")
+        st.caption("Promedios por colaborador -- solo disponibles en el archivo "
+                   "2026, que trae vales y GMM desglosados por persona.")
 
-    costo_total = DF["Costo Anual"].sum()
-    nomina_mensual = DF["Nómina Mensual"].sum()
+        costo_total = DF["Costo Anual"].sum()
+        nomina_mensual = DF["Nómina Mensual"].sum()
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Nómina mensual total", fmt(nomina_mensual))
-    c2.metric("Nómina mensual promedio", fmt(nomina_mensual / len(DF)))
-    c3.metric("Costo anual promedio", fmt(costo_total / len(DF)))
-    c4.metric("% carga social promedio", pct_plain(DF["Pct Carga Social"].mean()))
-    c5.metric("GMM promedio (quien lo tiene)", fmt(DF.loc[DF["GMM"] > 0, "GMM"].mean()))
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Nómina mensual total", fmt(nomina_mensual))
+        c2.metric("Nómina mensual promedio", fmt(nomina_mensual / len(DF)))
+        c3.metric("Costo anual promedio", fmt(costo_total / len(DF)))
+        c4.metric("% carga social promedio", pct_plain(DF["Pct Carga Social"].mean()))
+        c5.metric("GMM promedio (quien lo tiene)", fmt(DF.loc[DF["GMM"] > 0, "GMM"].mean()))
+    else:
+        st.subheader("Detalle 2026 (Real)")
+        st.caption("Promedios por colaborador de la pestaña 'Real' -- no trae "
+                   "carga social, vales ni GMM por separado (eso solo está en "
+                   "'Base'), solo el total pagado y el aguinaldo.")
 
-if pagina == "General":
+        if DF_2026_REAL.empty:
+            st.warning("No se pudo cargar la pestaña 'Real' de Nómina 2026.")
+        else:
+            n_personas = DF_2026_REAL["Colaborador"].nunique()
+            costo_total_real = DF_2026_REAL["Total"].sum()
+            aguinaldo_total = pd.to_numeric(DF_2026_REAL["aguinaldo"], errors="coerce").sum()
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Nómina mensual promedio (anual / 12)", fmt(costo_total_real / 12 / n_personas))
+            c2.metric("Costo anual promedio", fmt(costo_total_real / n_personas))
+            c3.metric("Aguinaldo pagado (total)", fmt(aguinaldo_total))
+
+if pagina == "General PTO":
     render_general("gen", usar_real=False)
-if pagina == "General 2026 Real":
+if pagina == "General Real":
     render_general("real", usar_real=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
