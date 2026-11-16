@@ -129,6 +129,28 @@ def load_data():
     return df.reset_index(drop=True)
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_2026_real():
+    """Pestaña 'Real' del mismo Sheet de 2026 (confirmado con el usuario,
+    2026-11-16): nómina REAL pagada mes a mes (no la plantilla/proyección de
+    'Base'). Trae gente que ya no sigue en 'Base' y algunos colaboradores con
+    varias filas (distintos conceptos de pago que sí se suman, igual que el
+    caso ya confirmado de 2027). Fila 'TOTAL' embebida al final -- se excluye
+    por 'Colaborador'=='TOTAL' exclusivamente, no por '# Colaborador' vacío
+    (mismo motivo que [[utilidad-cliente-suma-total-duplica]] / el caso de
+    Beneficios-Médico en 2027: varias filas reales no traen '# Colaborador')."""
+    url = f"https://docs.google.com/spreadsheets/d/{NOMINA_SHEET_ID}/export?format=xlsx"
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    df = pd.read_excel(BytesIO(resp.content), sheet_name="Real", header=0)
+    df.columns = [str(c).strip() for c in df.columns]
+    nombre_norm = df["Colaborador"].map(lambda v: str(v).strip().upper() if pd.notna(v) else v)
+    df = df[nombre_norm.notna() & (nombre_norm != "TOTAL")].copy()
+    df["Área"] = df["Área"].replace(ALIAS_AREA)
+    df["Departamento"] = df["Departamento"].fillna("Sin departamento")
+    df["Total"] = pd.to_numeric(df["Total"], errors="coerce").fillna(0.0)
+    return df.reset_index(drop=True)
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_2025():
     """Archivo propio de 2025 -- misma gente, otro esquema (Sueldo/Carga
     Social/Anualizado en vez de Mensual/Anual por separado). 'Anualizado'
@@ -233,6 +255,10 @@ try:
 except Exception:
     DF_2027 = pd.DataFrame()
 try:
+    DF_2026_REAL = load_2026_real()
+except Exception:
+    DF_2026_REAL = pd.DataFrame()
+try:
     INGRESOS_ANUAL, INGRESOS_POR_LINEA = load_ingresos()
 except Exception:
     INGRESOS_ANUAL = {"2025": None, "2026": None, "2026_real": None}
@@ -247,6 +273,9 @@ RESUMEN_ANUAL = {
     "2027": {"costo": DF_2027["Total"].sum() if not DF_2027.empty else None,
              "hc": DF_2027["Nombre"].nunique() if not DF_2027.empty else None,
              "por_area": DF_2027.groupby("Área")["Total"].sum().to_dict() if not DF_2027.empty else {}},
+    "2026_real": {"costo": DF_2026_REAL["Total"].sum() if not DF_2026_REAL.empty else None,
+                  "hc": DF_2026_REAL["Colaborador"].nunique() if not DF_2026_REAL.empty else None,
+                  "por_area": DF_2026_REAL.groupby("Área")["Total"].sum().to_dict() if not DF_2026_REAL.empty else {}},
 }
 
 # Desglose por departamento dentro de cada área, por año -- alimenta el
@@ -423,25 +452,29 @@ if pagina == "General":
 
     st.divider()
     st.subheader("Nómina como % de ingresos")
-    st.caption("Ingresos: mismo Sheet que usa Town Hall (pestaña 'Ingresos'). "
-               f"2026 está en vista \"{vista_2026}\" -- cámbiala arriba. Ese "
-               "Sheet no trae un bloque de 2027 todavía, por eso no aparece "
-               "aquí.")
+    st.caption("Ingresos: pestaña 'Ingresos' del Sheet de Town Hall. Nómina "
+               "Real: pestaña 'Real' del Sheet de Nómina 2026 (lo realmente "
+               "pagado mes a mes, no la plantilla de 'Base'). "
+               f"2026 está en vista \"{vista_2026}\" -- cámbiala arriba. "
+               "Ninguno de los dos Sheets trae todavía un bloque de 2027.")
+    clave_nomina_2026 = "2026_real" if usar_real else "2026"
     cols_ing = st.columns(2)
     for col, a in zip(cols_ing, ["2025", "2026"]):
         clave_ing = clave_ing_2026 if a == "2026" else a
+        clave_nomina = clave_nomina_2026 if a == "2026" else a
         ingreso_a = INGRESOS_ANUAL.get(clave_ing)
-        costo_a = RESUMEN_ANUAL[a]["costo"]
+        costo_a = RESUMEN_ANUAL[clave_nomina]["costo"]
         etiqueta_ing = f"Ingresos ({etiqueta_2026})" if a == "2026" else "Ingresos"
+        etiqueta_nom = f"Nómina ({etiqueta_2026})" if a == "2026" else "Nómina"
         with col, st.container(border=True):
             st.markdown(f"##### {a}")
             if ingreso_a is None or costo_a is None:
                 st.metric(etiqueta_ing, "—")
-                st.metric("Nómina", "—")
+                st.metric(etiqueta_nom, "—")
                 st.metric("Nómina / Ingresos", "—")
             else:
                 st.metric(etiqueta_ing, fmt(ingreso_a))
-                st.metric("Nómina", fmt(costo_a))
+                st.metric(etiqueta_nom, fmt(costo_a))
                 st.metric("Nómina / Ingresos", pct_plain(costo_a / ingreso_a))
 
     st.divider()
@@ -452,8 +485,9 @@ if pagina == "General":
                "Nómina son departamentos internos sin ingreso directo.")
     año_linea_sel = st.selectbox("Año", ["2025", "2026"], key="año_linea_sel")
     clave_ing_linea = clave_ing_2026 if año_linea_sel == "2026" else "2025"
+    clave_nomina_linea = clave_nomina_2026 if año_linea_sel == "2026" else "2025"
     lineas_ing = INGRESOS_POR_LINEA.get(clave_ing_linea, {})
-    costo_año_linea = RESUMEN_ANUAL[año_linea_sel]["por_area"]
+    costo_año_linea = RESUMEN_ANUAL[clave_nomina_linea]["por_area"]
     lineas_orden = sorted(lineas_ing.keys(), key=lambda l: -lineas_ing.get(l, 0))
 
     if not lineas_orden:
